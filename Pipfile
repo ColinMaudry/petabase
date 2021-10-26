@@ -1,0 +1,7 @@
+[requires]
+python_version = "3.7"
+
+[packages]
+apache-airflow = "==2.1.4"
+Jinja2 = "==2.11.3"
+psycopg2 = "*"
