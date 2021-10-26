@@ -1,24 +1,26 @@
 import argparse
 from metabase_api import Metabase_API
-from metabasepy import Client
 import sys
 import os
 
 mb_url = os.getenv('METABASE_URL')
 mb_user = os.getenv('METABASE_USER')
 mb_password = os.getenv('METABASE_PASSWORD')
-
+mbapi = Metabase_API(mb_url, mb_user, mb_password)
 
 def main(args):
     options = parseArguments(args)
-    if options['setNames'] and options['setNames']:
+    if options['setNames']:
         setNames(options)
+    elif options['clone']:
+        clone(options)
+    else:
+        print('What do you want?')
 
 
 def setNames(options):
     import re
 
-    mbapi = Metabase_API(mb_url, mb_user, mb_password)
     collection = mbapi.get('/api/collection/{}'.format(options['setNames']))
     bsdType = collection['name']
 
@@ -32,9 +34,33 @@ def setNames(options):
             mbapi.put('/api/card/{}'.format(item['id']), json=item)
 
 
+def clone(options):
+    mbapi = Metabase_API(mb_url, mb_user, mb_password)
+    mbapi.copy_collection(source_collection_id=options['clone'][0], destination_parent_collection_id=options['clone'][1])
+
+    if options['bsdType']:
+        sourceCollectionName = mbapi.get('/api/collection/{}'.format(options['clone'][0]))['name']
+        newCollectionId = getCollectionId(options['clone'][1], sourceCollectionName)
+        newCollection = mbapi.get('/api/collection/{}'.format(newCollectionId))
+        newCollection['name'] = options['bsdType']
+        mbapi.put('/api/collection/{}'.format(newCollectionId), json=newCollection)
+        setNamesOptions = {
+            'setNames': newCollectionId
+        }
+        setNames(setNamesOptions)
+
+
+
+def getCollectionId(parentId: int, name: str) -> int:
+    parentItems = mbapi.get('/api/collection/{}/items'.format(parentId))['data']
+    for item in parentItems:
+        if item['name'] == name:
+            return item['id']
+
+
 def parseArguments(args) -> dict:
     parser = argparse.ArgumentParser(
-        description="Petabase executes mass actions on Metabase cards and dashboards. For now, it's mainly targeted for Trackdéchets."
+        description="Petabase executes mass actions on Metabase cards and dashboards. For now, it's mainly targeted for Trackdéchets. You can find the item id in the URL of the item. E.g. if URL ends with '/21-item-name', the id is 21."
     )
     parser.add_argument('--clone', nargs=2, type=int,
                         help="Clone a card or a collection (arg 1) as a child to an existing collection (arg 2).")
@@ -52,16 +78,6 @@ def parseArguments(args) -> dict:
     }
 
     return options
-
-
-def listCollection(name: str, instance: str):
-    mbpy = Client(username=mb_user, password=mb_password, base_url=mb_url)
-    mbpy.authenticate()
-
-
-def copyCollection(source: int, target: int):
-    mbapi = Metabase_API(mb_url, mb_user, mb_password)
-    mbapi.copy_collection(source_collection_id=source, destination_parent_collection_id=target)
 
 
 if __name__ == '__main__':
