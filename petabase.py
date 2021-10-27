@@ -1,17 +1,27 @@
 import argparse
 from metabase_api import Metabase_API
 import os
+import re
 
 mb_url = os.getenv('METABASE_URL')
 mb_user = os.getenv('METABASE_USER')
 mb_password = os.getenv('METABASE_PASSWORD')
 mbapi = Metabase_API(mb_url, mb_user, mb_password)
+db_schema = 'default$default'
 options = {}
 
 
 def main():
     global options
     options = parseArguments()
+
+    db = {
+        'prod': 2,
+        'sandbox': 3
+    }
+
+    options['database'] = db[options['database']]
+
     if options['setNames']:
         setNames()
     elif options['clone']:
@@ -21,19 +31,51 @@ def main():
 
 
 def setNames():
-    import re
+    # Set card name and table name in query
 
     collection = mbapi.get('/api/collection/{}'.format(options['setNames']))
     bsdType = collection['name']
 
+    if not options['bsdType']:
+        options['bsdType'] = bsdType
+
     items: list = mbapi.get('/api/collection/{}/items'.format(options['setNames']))['data']
 
     for item in items:
-        if item['model'] == 'card' and bsdType not in item['name']:
-            newName = re.sub(' \([A-Z]+\)$', '', item['name'])
-            newName = newName + ' ({})'.format(bsdType)
-            item['name'] = newName
-            mbapi.put('/api/card/{}'.format(item['id']), json=item)
+        if item['model'] == 'card':
+            card = mbapi.get('/api/card/{}'.format(item['id']))
+            if bsdType not in card['name']:
+                newName = re.sub(' \([A-Z]+\)$', '', card['name'])
+                newName = newName + ' ({})'.format(bsdType)
+                card['name'] = newName
+            card = setTableName(card)
+            if options['database']:
+                card = setDatabaseId(card)
+
+            mbapi.put('/api/card/{}'.format(item['id']), json=card)
+
+
+def setTableName(card: dict) -> dict:
+    tableNames = {
+        'BSDD': 'Forms',
+        'DASRI': 'Bsdasri',
+        'BSFF': 'Bsff',
+        'VHU': 'Bsvhu',
+        'BSDA': 'Bsda'
+    }
+    newTableName = tableNames[options['bsdType']]
+    newTableId = getTableId(newTableName)
+    oldTableName = tableNames[mbapi.get('/api/collection/{}'.format(options['clone'][0]))['name']]
+
+    if card['dataset_query']['type'] == 'query':
+        card['dataset_query']['query']['source-table'] = newTableId
+    elif card['dataset_query']['type'] == 'native':
+        to_replace = '"{}"\."{}"'.format(re.escape(db_schema), oldTableName)
+        replace_with = '"{}"."{}"'.format(db_schema, newTableName)
+        card['dataset_query']['native']['query'] = re.sub(to_replace, replace_with,
+                                                          card['dataset_query']['native']['query'])
+
+    return card
 
 
 def clone():
@@ -57,9 +99,10 @@ def clone():
             options['setNames'] = newCollectionId
             setNames()
 
-        if options['database']:
-            options['collectionId'] = newCollectionId
-            database()
+        # setDatabaseId is run if necessary within setNames
+        # The lines below only run if only --database is set, not --bsdType
+        elif options['database']:
+            changeDatabaseInCollection(newCollectionId)
 
 
 def getCollectionId(parentId: int, name: str) -> int:
@@ -69,21 +112,27 @@ def getCollectionId(parentId: int, name: str) -> int:
             return item['id']
 
 
-def database():
-    collectionId = options['collectionId']
-    newDbName = options['database']
-    items: list = mbapi.get('/api/collection/{}/items'.format(collectionId))['data']
+def getTableId(tableName) -> int:
+    tables = mbapi.get('/api/table/')
+    for table in tables:
+        if table['name'] == tableName and \
+                table['db']['id'] == options['database'] and \
+                table['schema'] == db_schema:
+            return table['id']
 
-    db = {
-        'prod': 2,
-        'sandbox': 3
-    }
+
+def changeDatabaseInCollection(collectionId):
+    items: list = mbapi.get('/api/collection/{}/items'.format(collectionId))['data']
 
     for item in items:
         if item['model'] == 'card':
-            item['database_id'] = item['database_query']['database'] = db[newDbName]
-            mbapi.put('/api/card/{}'.format(item['id']), json=item)
+            card = mbapi.get('/api/card/{}'.format(item['id']))
+            card = setDatabaseId(card)
+            mbapi.put('/api/card/{}'.format(item['id']), json=card)
 
+def setDatabaseId(card) -> dict:
+    card['database_id'] = card['dataset_query']['database'] = options['database']
+    return card
 
 def parseArguments() -> dict:
     parser = argparse.ArgumentParser(
@@ -101,7 +150,6 @@ def parseArguments() -> dict:
                         help="The target type of BSD: BSDD, DASRI, BSFF, VHU, BSDA")
     parser.add_argument('--setNames', nargs=1, default=False,
                         help="Makes sure the name of the cards in a collection (arg 1) contains the type of BSD. Adds it if necessary.")
-
 
     parsed_args = vars(parser.parse_args())
 
