@@ -4,4 +4,3 @@ python_version = "3.8"
 [packages]
 argparse = "*"
 metabase-api = "*"
-metabasepy = "*"
