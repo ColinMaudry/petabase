@@ -6,6 +6,13 @@ import re
 mb_url = os.getenv('METABASE_URL')
 mb_user = os.getenv('METABASE_USER')
 mb_password = os.getenv('METABASE_PASSWORD')
+
+try:
+    assert isinstance(mb_url, str) and isinstance(mb_user, str) and isinstance(mb_password, str)
+except AssertionError:
+    print("You must set the environment variables METABASE_URL, METABASE_USER and METABASE_PASSWORD.")
+    exit(1)
+
 mbapi = Metabase_API(mb_url, mb_user, mb_password)
 db_schema = 'default$default'
 options = {}
@@ -158,7 +165,6 @@ def parseArguments() -> dict:
             parsed_args[arg] = parsed_args[arg][0]
 
     return parsed_args
-
 
 if __name__ == '__main__':
     main()
