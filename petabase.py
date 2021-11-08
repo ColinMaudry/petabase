@@ -151,7 +151,7 @@ def parseArguments() -> dict:
                         help="""Clone a card or a collection (arg 1) as a child to an existing collection (arg 2).
                         Can be used with --database""")
     parser.add_argument('--database', nargs=1, default=False, choices=['prod', 'sandbox'], required=True,
-                        help="With --clone : set the database of all the clone cards to 'prod' or 'sandbox' (arg 1).")
+                        help="Mandatory with --clone: set the database of all the clone cards to 'prod' or 'sandbox' (arg 1).")
     parser.add_argument('--bsdType', nargs=1, required=False, default=False,
                         choices=['BSDD', 'DASRI', 'BSFF', 'VHU', 'BSDA'],
                         help="The target type of BSD: BSDD, DASRI, BSFF, VHU, BSDA")
@@ -160,6 +160,7 @@ def parseArguments() -> dict:
 
     parsed_args = vars(parser.parse_args())
 
+    # If an arg is a list of one value, make it a string/number
     for arg in parsed_args:
         if isinstance(parsed_args[arg], list) and len(parsed_args[arg]) == 1:
             parsed_args[arg] = parsed_args[arg][0]
