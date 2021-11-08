@@ -41,20 +41,20 @@ def setNames():
     # Set card name and table name in query
 
     collection = mbapi.get('/api/collection/{}'.format(options['setNames']))
-    bsdType = collection['name']
+    bsd_type = collection['name']
 
     if not options['bsdType']:
-        options['bsdType'] = bsdType
+        options['bsdType'] = bsd_type
 
     items: list = mbapi.get('/api/collection/{}/items'.format(options['setNames']))['data']
 
     for item in items:
         if item['model'] == 'card':
             card = mbapi.get('/api/card/{}'.format(item['id']))
-            if bsdType not in card['name']:
-                newName = re.sub(' \([A-Z]+\)$', '', card['name'])
-                newName = newName + ' ({})'.format(bsdType)
-                card['name'] = newName
+            if bsd_type not in card['name']:
+                new_name = re.sub(' \([A-Z]+\)$', '', card['name'])
+                new_name = new_name + ' ({})'.format(bsd_type)
+                card['name'] = new_name
             card = setTableName(card)
             if options['database']:
                 card = setDatabaseId(card)
@@ -63,22 +63,22 @@ def setNames():
 
 
 def setTableName(card: dict) -> dict:
-    tableNames = {
+    table_names = {
         'BSDD': 'Forms',
         'DASRI': 'Bsdasri',
         'BSFF': 'Bsff',
         'VHU': 'Bsvhu',
         'BSDA': 'Bsda'
     }
-    newTableName = tableNames[options['bsdType']]
-    newTableId = getTableId(newTableName)
-    oldTableName = tableNames[mbapi.get('/api/collection/{}'.format(options['clone'][0]))['name']]
+    new_table_name = table_names[options['bsdType']]
+    newTableId = getTableId(new_table_name)
+    oldTableName = table_names[mbapi.get('/api/collection/{}'.format(options['clone'][0]))['name']]
 
     if card['dataset_query']['type'] == 'query':
         card['dataset_query']['query']['source-table'] = newTableId
     elif card['dataset_query']['type'] == 'native':
         to_replace = '"{}"\."{}"'.format(re.escape(db_schema), oldTableName)
-        replace_with = '"{}"."{}"'.format(db_schema, newTableName)
+        replace_with = '"{}"."{}"'.format(db_schema, new_table_name)
         card['dataset_query']['native']['query'] = re.sub(to_replace, replace_with,
                                                           card['dataset_query']['native']['query'])
 
@@ -86,50 +86,50 @@ def setTableName(card: dict) -> dict:
 
 
 def clone():
-    sourceCollection = options['clone'][0]
-    parentCollection = options['clone'][1]
+    source_collection = options['clone'][0]
+    parent_collection = options['clone'][1]
 
     # Equal ids lead to infinite creation of clones
-    assert sourceCollection != parentCollection
+    assert source_collection != parent_collection
 
-    mbapi.copy_collection(source_collection_id=sourceCollection,
-                          destination_parent_collection_id=parentCollection)
+    mbapi.copy_collection(source_collection_id=source_collection,
+                          destination_parent_collection_id=parent_collection)
 
     if options['bsdType'] or options['database']:
-        sourceCollectionName = mbapi.get('/api/collection/{}'.format(sourceCollection))['name']
-        newCollectionId = getCollectionId(parentCollection, sourceCollectionName)
+        source_collection_name = mbapi.get('/api/collection/{}'.format(source_collection))['name']
+        new_collection_id = getCollectionId(parent_collection, source_collection_name)
 
         if options['bsdType']:
-            newCollection = mbapi.get('/api/collection/{}'.format(newCollectionId))
-            newCollection['name'] = options['bsdType']
-            mbapi.put('/api/collection/{}'.format(newCollectionId), json=newCollection)
-            options['setNames'] = newCollectionId
+            new_collection = mbapi.get('/api/collection/{}'.format(new_collection_id))
+            new_collection['name'] = options['bsdType']
+            mbapi.put('/api/collection/{}'.format(new_collection_id), json=new_collection)
+            options['setNames'] = new_collection_id
             setNames()
 
         # setDatabaseId is run if necessary within setNames
         # The lines below only run if only --database is set, not --bsdType
         elif options['database']:
-            changeDatabaseInCollection(newCollectionId)
+            changeDatabaseInCollection(new_collection_id)
 
 
-def getCollectionId(parentId: int, name: str) -> int:
-    parentItems = mbapi.get('/api/collection/{}/items'.format(parentId))['data']
-    for item in parentItems:
+def getCollectionId(parent_id: int, name: str) -> int:
+    parent_items = mbapi.get('/api/collection/{}/items'.format(parent_id))['data']
+    for item in parent_items:
         if item['name'] == name:
             return item['id']
 
 
-def getTableId(tableName) -> int:
+def getTableId(table_name) -> int:
     tables = mbapi.get('/api/table/')
     for table in tables:
-        if table['name'] == tableName and \
+        if table['name'] == table_name and \
                 table['db']['id'] == options['database'] and \
                 table['schema'] == db_schema:
             return table['id']
 
 
-def changeDatabaseInCollection(collectionId):
-    items: list = mbapi.get('/api/collection/{}/items'.format(collectionId))['data']
+def changeDatabaseInCollection(collection_id):
+    items: list = mbapi.get('/api/collection/{}/items'.format(collection_id))['data']
 
     for item in items:
         if item['model'] == 'card':
