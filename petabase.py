@@ -8,7 +8,9 @@ import logging
 from datetime import datetime
 
 time = datetime.now().strftime("%Y-%m-%dT%H:%M")
-logging.basicConfig(filename='{}.log'.format(time), encoding='utf-8', format='%(asctime)s %(message)s', datefmt='%H:%M:%S', level=logging.INFO)
+
+# With python 3.9+, add encoding='utf-8'
+logging.basicConfig(filename='{}.log'.format(time), format='%(asctime)s %(message)s', datefmt='%H:%M:%S', level=logging.INFO)
 
 mb_url = os.getenv('METABASE_URL')
 mb_user = os.getenv('METABASE_USER')
