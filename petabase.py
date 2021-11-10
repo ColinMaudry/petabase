@@ -1,6 +1,4 @@
 import argparse
-import datetime
-
 from metabase_api import Metabase_API
 import os
 import re
@@ -10,7 +8,7 @@ from datetime import datetime
 time = datetime.now().strftime("%Y-%m-%dT%H:%M")
 
 # With python 3.9+, add encoding='utf-8'
-logging.basicConfig(filename='{}.log'.format(time), format='%(asctime)s %(message)s', datefmt='%H:%M:%S', level=logging.INFO)
+logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%H:%M:%S', level=logging.INFO)
 
 mb_url = os.getenv('METABASE_URL')
 mb_user = os.getenv('METABASE_USER')
@@ -26,7 +24,13 @@ mbapi = Metabase_API(mb_url, mb_user, mb_password)
 logging.info("Metabase API connection established")
 db_schema = 'default$default'
 options = {}
-
+table_names = {
+        'BSDD': 'Forms',
+        'DASRI': 'Bsdasri',
+        'BSFF': 'Bsff',
+        'VHU': 'Bsvhu',
+        'BSDA': 'Bsda'
+    }
 
 def main():
     global options
@@ -77,19 +81,14 @@ def setNames():
 
 
 def setTableName(card: dict) -> dict:
-    table_names = {
-        'BSDD': 'Forms',
-        'DASRI': 'Bsdasri',
-        'BSFF': 'Bsff',
-        'VHU': 'Bsvhu',
-        'BSDA': 'Bsda'
-    }
     new_table_name = table_names[options['bsdType']]
     newTableId = getTableId(new_table_name)
     oldTableName = table_names[mbapi.get('/api/collection/{}'.format(options['clone'][0]))['name']]
 
     if card['dataset_query']['type'] == 'query':
         card['dataset_query']['query']['source-table'] = newTableId
+
+    # TODO: replace table name in native queries doesn't seem to work
     elif card['dataset_query']['type'] == 'native':
         to_replace = '"{}"\."{}"'.format(re.escape(db_schema), oldTableName)
         replace_with = '"{}"."{}"'.format(db_schema, new_table_name)
@@ -106,12 +105,15 @@ def clone():
     # Equal ids lead to infinite creation of clones
     assert source_collection != parent_collection
 
+    # TODO: check that the target parent collection doesn't already have a collecton with the
+    #  new collection name
+
     logging.info('Copying collection %s to parent collection %s...', source_collection, parent_collection)
     mbapi.copy_collection(source_collection_id=source_collection,
                           destination_parent_collection_id=parent_collection)
+    source_collection_name = mbapi.get('/api/collection/{}'.format(source_collection))['name']
 
     if options['bsdType'] or options['database']:
-        source_collection_name = mbapi.get('/api/collection/{}'.format(source_collection))['name']
         new_collection_id = getCollectionId(parent_collection, source_collection_name)
         logging.info("-> New collection %s created.", new_collection_id)
 
@@ -126,6 +128,7 @@ def clone():
         # setDatabaseId is run if necessary within setNames
         # The lines below only run if only --database is set, not --bsdType
         elif options['database']:
+            options['bsdType'] = source_collection_name
             changeDatabaseInCollection(new_collection_id)
 
 
@@ -149,19 +152,25 @@ def changeDatabaseInCollection(collection_id):
     logging.info('Retrieving item list of collection %s for database name change...', collection_id)
     items: list = mbapi.get('/api/collection/{}/items'.format(collection_id))['data']
     logging.info('-> Items list retrieved (%s items)', len(items))
+    new_table_id = getTableId(table_names[options['bsdType']])
+    assert isinstance(new_table_id, int)
 
     for item in items:
         if item['model'] == 'card':
             card = mbapi.get('/api/card/{}'.format(item['id']))
             card = setDatabaseId(card)
+            card = setTableId(card, new_table_id)
             logging.info("-- Pushing card '%s' (%s) with new database id (%s)...", card['name'], card['id'], card['database_id'])
-            mbapi.put('/api/card/{}'.format(item['id']), json=card)
+            mbapi.put('/api/card/{}'.format(card['id']), json=card)
 
 
 def setDatabaseId(card) -> dict:
     card['database_id'] = card['dataset_query']['database'] = options['database']
     return card
 
+def setTableId(card, table_id: int) -> dict:
+    card['dataset_query']['query']['source-table'] = card['table_id'] = table_id
+    return card
 
 def parseArguments() -> dict:
     parser = argparse.ArgumentParser(
