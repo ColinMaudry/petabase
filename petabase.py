@@ -25,12 +25,13 @@ logging.info("Metabase API connection established")
 db_schema = 'default$default'
 options = {}
 table_names = {
-        'BSDD': 'Forms',
-        'DASRI': 'Bsdasri',
-        'BSFF': 'Bsff',
-        'VHU': 'Bsvhu',
-        'BSDA': 'Bsda'
-    }
+    'BSDD': 'Forms',
+    'DASRI': 'Bsdasri',
+    'BSFF': 'Bsff',
+    'VHU': 'Bsvhu',
+    'BSDA': 'Bsda'
+}
+
 
 def main():
     global options
@@ -76,6 +77,7 @@ def setNames():
             card = setTableName(card)
             if options['database']:
                 card = setDatabaseId(card)
+                card = replaceFieldIdsInCard(card)
             logging.info("-- Pushing card data '%s' with new properties...", card['name'])
             mbapi.put('/api/card/{}'.format(item['id']), json=card)
 
@@ -94,7 +96,6 @@ def setTableName(card: dict) -> dict:
         replace_with = '"{}"."{}"'.format(db_schema, new_table_name)
         card['dataset_query']['native']['query'] = re.sub(to_replace, replace_with,
                                                           card['dataset_query']['native']['query'])
-
     return card
 
 
@@ -113,6 +114,11 @@ def clone():
                           destination_parent_collection_id=parent_collection)
     source_collection_name = mbapi.get('/api/collection/{}'.format(source_collection))['name']
 
+    # If there is a database change, query fields will need to be updated
+    if options['database']:
+        global fields
+        fields = mbapi.get('/api/database/{}/fields', format(options['database']))
+
     if options['bsdType'] or options['database']:
         new_collection_id = getCollectionId(parent_collection, source_collection_name)
         logging.info("-> New collection %s created.", new_collection_id)
@@ -120,7 +126,8 @@ def clone():
         if options['bsdType']:
             new_collection = mbapi.get('/api/collection/{}'.format(new_collection_id))
             new_collection['name'] = options['bsdType']
-            logging.info("Pushing clone collection %s with new name '%s'...", new_collection['id'], new_collection['name'])
+            logging.info("Pushing clone collection %s with new name '%s'...", new_collection['id'],
+                         new_collection['name'])
             mbapi.put('/api/collection/{}'.format(new_collection_id), json=new_collection)
             options['setNames'] = new_collection_id
             setNames()
@@ -160,7 +167,9 @@ def changeDatabaseInCollection(collection_id):
             card = mbapi.get('/api/card/{}'.format(item['id']))
             card = setDatabaseId(card)
             card = setTableId(card, new_table_id)
-            logging.info("-- Pushing card '%s' (%s) with new database id (%s)...", card['name'], card['id'], card['database_id'])
+            card = replaceFieldIdsInCard(card)
+            logging.info("-- Pushing card '%s' (%s) with new database id (%s)...", card['name'], card['id'],
+                         card['database_id'])
             mbapi.put('/api/card/{}'.format(card['id']), json=card)
 
 
@@ -168,9 +177,57 @@ def setDatabaseId(card) -> dict:
     card['database_id'] = card['dataset_query']['database'] = options['database']
     return card
 
+
 def setTableId(card, table_id: int) -> dict:
     card['dataset_query']['query']['source-table'] = card['table_id'] = table_id
     return card
+
+
+def replaceFieldIdsInCard(card) -> dict:
+    if card['dataset_query']['type'] == 'query':
+        assert isinstance(options['database'], int)
+
+        query = card['dataset_query']['query']
+        params = ['aggregation', 'breakout', 'filter', 'joins']
+
+        for param in query.keys():
+            if param in params:
+                query[param] = replaceFieldIdsInList(query[param])
+        card['dataset_query']['query'] = query
+        return card
+    else:
+        logging.info(
+            'Card https://analytics.trackdechets.beta.gouv.fr/question/%s query fields need to be updated manually',
+            card['id'])
+        return card
+
+
+def replaceFieldId(field_id) -> int:
+    current_field = mbapi.get('/api/field/{}'.format(field_id))
+    table_name = current_field['table']['name']
+    field_name = current_field['name']
+
+    if current_field['table']['db_id'] == options['database']:
+        return field_id
+    else:
+        for field in fields:
+            if field['table_name'] == table_name and field['name'] == field_name:
+                return field['id']
+
+
+def replaceFieldIdsInList(query: list):
+    new_list = []
+    for val in query:
+        if not isinstance(val, list):
+            new_list = new_list.append(val)
+        else:
+            if val[0] == 'field':
+                val[1] = replaceFieldId(val[1])
+            else:
+                val = replaceFieldIdsInList(val)
+            new_list = new_list.append(val)
+    return new_list
+
 
 def parseArguments() -> dict:
     parser = argparse.ArgumentParser(
