@@ -77,6 +77,7 @@ def setNames():
             card = setTableName(card)
             if options['database']:
                 card = setDatabaseId(card)
+                # The field id will be replaced, BUT some may not exist for new bsd type (= in the new table)
                 card = replaceFieldIdsInCard(card)
             logging.info("-- Pushing card data '%s' with new properties...", card['name'])
             mbapi.put('/api/card/{}'.format(item['id']), json=card)
@@ -143,7 +144,9 @@ def getCollectionId(parent_id: int, name: str) -> int:
     parent_items = mbapi.get('/api/collection/{}/items'.format(parent_id))['data']
     for item in parent_items:
         if item['name'] == name:
-            return item['id']
+            item_id = item['id']
+            assert isinstance(item_id, int)
+            return item_id
 
 
 def getTableId(table_name) -> int:
@@ -152,7 +155,9 @@ def getTableId(table_name) -> int:
         if table['name'] == table_name and \
                 table['db']['id'] == options['database'] and \
                 table['schema'] == db_schema:
-            return table['id']
+            table_id = table['id']
+            assert isinstance(table_id, int)
+            return table_id
 
 
 def changeDatabaseInCollection(collection_id):
@@ -209,7 +214,6 @@ def replaceFieldId(field_id) -> int:
     # the fields variable has display names for field and table but calls it name, so we need to match on display name
     table_name = current_field['table']['display_name']
     field_name = current_field['display_name']
-    new_field_id = int()
 
     if current_field['table']['db_id'] == options['database']:
         return field_id
@@ -217,9 +221,11 @@ def replaceFieldId(field_id) -> int:
         for field in fields:
             if field['table_name'] == table_name and field['name'] == field_name:
                 new_field_id = field['id']
-
-        assert isinstance(new_field_id, int)
-        return new_field_id
+                try:
+                    assert isinstance(new_field_id, int)
+                except AssertionError:
+                    logging.warning("Warning: field {} doesn't exist in table {} and database {}".format(field_name, table_name, options['database']))
+                return new_field_id
 
 
 def replaceFieldIdsInList(query: list):
