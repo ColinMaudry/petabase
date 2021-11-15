@@ -29,7 +29,7 @@ table_names = {
     'DASRI': 'Bsdasri',
     'BSFF': 'Bsff',
     'VHU': 'Bsvhu',
-    'BSDA': 'Bsda'
+    'BSDA': 'Bsda',
 }
 
 
@@ -39,7 +39,7 @@ def main():
 
     db = {
         'prod': 2,
-        'sandbox': 3
+        'sandbox': 3,
     }
 
     options['database'] = db[options['database']]
@@ -117,7 +117,7 @@ def clone():
     # If there is a database change, query fields will need to be updated
     if options['database']:
         global fields
-        fields = mbapi.get('/api/database/{}/fields', format(options['database']))
+        fields = mbapi.get('/api/database/{}/fields'.format(options['database']))
 
     if options['bsdType'] or options['database']:
         new_collection_id = getCollectionId(parent_collection, source_collection_name)
@@ -165,6 +165,7 @@ def changeDatabaseInCollection(collection_id):
     for item in items:
         if item['model'] == 'card':
             card = mbapi.get('/api/card/{}'.format(item['id']))
+            logging.info('-> Updating data of card {}...'.format(card['id']))
             card = setDatabaseId(card)
             card = setTableId(card, new_table_id)
             card = replaceFieldIdsInCard(card)
@@ -204,28 +205,35 @@ def replaceFieldIdsInCard(card) -> dict:
 
 def replaceFieldId(field_id) -> int:
     current_field = mbapi.get('/api/field/{}'.format(field_id))
-    table_name = current_field['table']['name']
-    field_name = current_field['name']
+
+    # the fields variable has display names for field and table but calls it name, so we need to match on display name
+    table_name = current_field['table']['display_name']
+    field_name = current_field['display_name']
+    new_field_id = int()
 
     if current_field['table']['db_id'] == options['database']:
         return field_id
     else:
         for field in fields:
             if field['table_name'] == table_name and field['name'] == field_name:
-                return field['id']
+                new_field_id = field['id']
+
+        assert isinstance(new_field_id, int)
+        return new_field_id
 
 
 def replaceFieldIdsInList(query: list):
     new_list = []
+    print(query)
     for val in query:
         if not isinstance(val, list):
-            new_list = new_list.append(val)
+            new_list.append(val)
         else:
             if val[0] == 'field':
                 val[1] = replaceFieldId(val[1])
             else:
                 val = replaceFieldIdsInList(val)
-            new_list = new_list.append(val)
+            new_list.append(val)
     return new_list
 
 
