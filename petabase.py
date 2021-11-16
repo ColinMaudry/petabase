@@ -110,15 +110,18 @@ def clone():
     # TODO: check that the target parent collection doesn't already have a collecton with the
     #  new collection name
 
-    logging.info('Copying collection %s to parent collection %s...', source_collection, parent_collection)
+    logging.info('Copying collection %s (and all children) to '
+                 'parent collection %s...', source_collection, parent_collection)
     mbapi.copy_collection(source_collection_id=source_collection,
                           destination_parent_collection_id=parent_collection)
     source_collection_name = mbapi.get('/api/collection/{}'.format(source_collection))['name']
 
-    # If there is a database change, query fields will need to be updated
+    # If there is a database change, query fields and tables will need to be updated
     if options['database']:
         global fields
         fields = mbapi.get('/api/database/{}/fields'.format(options['database']))
+        global tables
+        tables = [table for table in mbapi.get('/api/table/') if table['db_id'] == options['database']]
 
     if options['bsdType'] or options['database']:
         new_collection_id = getCollectionId(parent_collection, source_collection_name)
@@ -150,7 +153,6 @@ def getCollectionId(parent_id: int, name: str) -> int:
 
 
 def getTableId(table_name) -> int:
-    tables = mbapi.get('/api/table/')
     for table in tables:
         if table['name'] == table_name and \
                 table['db']['id'] == options['database'] and \
@@ -172,8 +174,16 @@ def changeDatabaseInCollection(collection_id):
             card = mbapi.get('/api/card/{}'.format(item['id']))
             logging.info('-> Updating data of card {}...'.format(card['id']))
             card = setDatabaseId(card)
-            card = setTableId(card, new_table_id)
-            card = replaceFieldIdsInCard(card)
+            # Only for queries, not handwritten SQL
+            if card['dataset_query']['type'] == 'query':
+                card = setTableId(card, new_table_id)
+                card = replaceFieldIdsInCard(card)
+            else:
+                # This info only appears if bsdType is NOT set (= if clone without change of bsdType)
+                logging.info(
+                    '-? Card https://analytics.trackdechets.beta.gouv.fr/question/%s is a native '
+                    'SQL query, no update of table and fields.',
+                    card['id'])
             logging.info("-- Pushing card '%s' (%s) with new database id (%s)...", card['name'], card['id'],
                          card['database_id'])
             mbapi.put('/api/card/{}'.format(card['id']), json=card)
@@ -194,71 +204,86 @@ def replaceFieldIdsInCard(card) -> dict:
         assert isinstance(options['database'], int)
 
         query = card['dataset_query']['query']
-        params = ['aggregation', 'breakout', 'filter', 'joins']
+        params = ['aggregation', 'breakout', 'filter']
 
         for param in query.keys():
             if param in params:
                 query[param] = replaceFieldIdsInList(query[param])
+            elif param == 'joins':
+                logging.warning('WARNING: https://analytics.trackdechets.beta.gouv.fr/question/{} has '
+                                'a join that requires a manual update.', card['id'])
         card['dataset_query']['query'] = query
         return card
     else:
-        logging.info(
-            'Card https://analytics.trackdechets.beta.gouv.fr/question/%s query fields need to be updated manually',
+        logging.warning(
+            'WARNING: If it\'s a bsdType change, card https://analytics.trackdechets.beta.gouv.fr/question/%s query fields '
+            'need to be updated manually',
             card['id'])
         return card
 
 
 def replaceFieldId(field_id) -> int:
-    current_field = mbapi.get('/api/field/{}'.format(field_id))
 
-    # the fields variable has display names for field and table but calls it name, so we need to match on display name
-    table_name = current_field['table']['display_name']
-    field_name = current_field['display_name']
+    # the fields array objects use display names for field and table even
+    # if they are called them "name", so we need to match on display name
+    table_name = getTargetTableName()
+    field_name = mbapi.get('/api/field/{}'.format(field_id))['display_name']
 
-    if current_field['table']['db_id'] == options['database']:
-        return field_id
-    else:
-        for field in fields:
-            if field['table_name'] == table_name and field['name'] == field_name:
-                new_field_id = field['id']
-                try:
-                    assert isinstance(new_field_id, int)
-                except AssertionError:
-                    logging.warning("Warning: field {} doesn't exist in table {} and database {}".format(field_name, table_name, options['database']))
-                return new_field_id
+    for field in fields:
+        if field['table_name'] == table_name and field['name'] == field_name:
+            new_field_id = field['id']
+            try:
+                assert isinstance(new_field_id, int)
+            except AssertionError:
+                logging.warning("Warning: field {} doesn't exist in table {} and "
+                                "database {}".format(field_name, table_name, options['database']))
+            return new_field_id
 
 
 def replaceFieldIdsInList(query: list):
     new_list = []
-    print(query)
-    for val in query:
-        if not isinstance(val, list):
-            new_list.append(val)
-        else:
-            if val[0] == 'field':
-                val[1] = replaceFieldId(val[1])
+    for value in query:
+        if not isinstance(value, list) or not isinstance(value, dict):
+            new_list.append(value)
+        elif isinstance(value, list):
+            if value[0] == 'field':
+                value[1] = replaceFieldId(value[1])
             else:
-                val = replaceFieldIdsInList(val)
-            new_list.append(val)
+                value = replaceFieldIdsInList(value)
+            new_list.append(value)
+
     return new_list
+
+
+def getTargetTableName() -> str:
+    target_table_name = ""
+
+    for table in tables:
+        if table['name'] == table_names[options['bsdType']] and table['db_id'] == options['database']:
+            target_table_name = table['display_name']
+            break
+    assert len(target_table_name) > 0
+    return target_table_name
 
 
 def parseArguments() -> dict:
     parser = argparse.ArgumentParser(
-        description="Petabase executes mass actions on Metabase cards and dashboards. For now, it's mainly targeted for \
-                    Trackdéchets. You can find the item id in the URL of the item. E.g. if URL ends with '/21-item-name', \
-                    the id is 21."
+        description="Petabase executes mass actions on Metabase cards and dashboards. "
+                    "For now, it's mainly targeted for Trackdéchets. You can find the item id in the URL of the item. "
+                    "E.g. if URL ends with '/21-item-name', the id is 21."
     )
     parser.add_argument('--clone', nargs=2, type=int, default=False,
                         help="""Clone a card or a collection (arg 1) as a child to an existing collection (arg 2).
                         Can be used with --database""")
     parser.add_argument('--database', nargs=1, default=False, choices=['prod', 'sandbox'], required=True,
-                        help="Mandatory with --clone: set the database of all the clone cards to 'prod' or 'sandbox' (arg 1).")
+                        help="Mandatory with --clone: set the database of all the clone cards to "
+                             "'prod' or 'sandbox' (arg 1).")
     parser.add_argument('--bsdType', nargs=1, required=False, default=False,
                         choices=['BSDD', 'DASRI', 'BSFF', 'VHU', 'BSDA'],
                         help="The target type of BSD: BSDD, DASRI, BSFF, VHU, BSDA")
     parser.add_argument('--setNames', nargs=1, default=False,
-                        help="Makes sure the name of the cards in a collection (arg 1) contains the type of BSD. Adds it if necessary.")
+                        help="Makes sure the name of the cards in a collection (arg 1) contains the type of BSD. "
+                             "Adds it if necessary.")
 
     parsed_args = vars(parser.parse_args())
 
